@@ -1,0 +1,111 @@
+---
+title: "Collaborative_Filtering"
+output: html_document
+---
+```{r}
+setwd("C:/Users/sjaikumar/Downloads/Digging into data related/yelp_dataset_challenge_academic_dataset")
+library(grid)
+library(cwhmisc)
+library(e1071)
+library(rpart)
+library(recommenderlab)
+library(reshape2)
+library(plyr)
+library(caret)
+library(mlbench)
+library(data.table)
+```
+
+```{r}
+#Reading the Yelp Academic Review dataset
+reviews_original <- read.csv("yelp_academic_dataset_review.csv")
+review_collabo <- reviews_original
+#Reading the Business dataset
+business_collabo <-read.csv("yelp_academic_dataset_business.csv")
+#Reading the User dataset
+user <- read.csv("yelp_academic_dataset_user.csv")
+user_collabo <- user
+```
+
+```{r}
+#Filtering the results to only select Restaurants
+business_collabo$categories <- apply(business_collabo, 1, function(x) { grepl("restaurant",tolower(x[76]))})
+business_collabo <-business_collabo[business_collabo$categories== TRUE,]
+
+#Setting a Threshold value to avoid a large matrix
+threshold <- (max(business_collabo$review_count,na.rm=FALSE)+mean(business_collabo$review_count,na.rm=FALSE))/8
+
+
+business_sub <- subset(business_collabo, (business_collabo$review_count > threshold) & (stars >=4), select=c("business_id","name","review_count","stars","attributes.Price.Range"))
+
+###get the most popular list
+#sorting the matrix based on stars and price.range
+business_popular <- business_sub[ order(-business_sub[,4], -business_sub[,3]), ]
+business_list <- as.vector(business_sub$business_id)
+user_threshold <- (max(user_collabo$review_count,na.rm=FALSE) + mean(user_collabo$review_count,na.rm=FALSE))/8
+user_list <- subset(user_collabo, user_collabo$review_count > user_threshold, select=c("user_id"))
+user_list <- as.vector(user_list$user_id)
+user_threshold
+review_collabo <- review_collabo[review_collabo$business_id %in% business_list,]
+review_collabo <- review_collabo[review_collabo$user_id %in% user_list,]
+review_collabo <- review_collabo[,c(1,5,7,10)]
+```
+
+```{r}
+review_collabo$stars <- as.numeric(review_collabo$stars)
+
+# Aggregate multiple reviews from the same user-business pair
+review_collabo <- aggregate(stars ~ user_id + business_id, FUN = mean, data=review_collabo)
+
+# Convert the dataset to a matrix with rows representing "user_id" and columns representing "business_id"
+g <- acast(review_collabo, user_id ~ business_id,value.var="stars")
+g <- as.matrix(g)
+```
+
+
+```{r}
+#keep the information for the user id
+name_list <- list(rownames(g))
+# Convert it to realRatingMatrix data structure using package recommender lab
+# Convert R into realRatingMatrix data structure
+#   realRatingMatrix is a recommenderlab sparse-matrix like data-structure
+r <- as(g, "realRatingMatrix")
+# Normalize the rating matrix
+r_m <- normalize(r)
+
+# Create a recommender object (model)
+#       They pertain to four different algorithms.
+#        UBCF: User-based collaborative filtering
+#        IBCF: Item-based collaborative filtering
+#      Parameter 'method' decides similarity measure
+#        Cosine or Jaccard
+rec_UBCF <-Recommender(r[1:nrow(r)],method="UBCF", param=list(normalize = "Z-score",method="Cosine",nn=5, minRating=1))
+```
+
+```{r}
+recom_UBCF <- predict(rec_UBCF, r[1:nrow(r)], type="ratings")
+recom_UBCF
+
+
+as(recom_UBCF, "list")
+# Study and Comparison of Following
+as(r, "matrix")     # Has lots of NAs. 'r' is the original matrix
+as(recom_UBCF, "matrix") # Is full of ratings. NAs disappear
+as(recom_UBCF, "matrix")[,1:10] # Show ratings for all users for items 1 to 10
+as(recom_UBCF, "matrix")[5,3]   # Rating for user 5 for item at index 3
+```
+
+
+```{r}
+# Converting All Recommendations to List Structure
+rec_list<-as(recom_UBCF,"list")
+head(summary(rec_list))
+# Access this list. User 6, item at index 6
+rec_list[[6]][6]
+# Convert to data frame all Ratings that have been Provided for user #1
+u1<-as.data.frame(rec_list[[1]])
+attributes(u1)
+class(u1)
+# Create a column by name of id in data frame u1 and populate it with row names
+u1$id<-row.names(u1)
+```
